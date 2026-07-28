@@ -59,7 +59,19 @@
 - [ ] **Role 1**: Viết bộ **Test Cases** vào file `config/test_cases.json` (câu đơn giản, câu multi-step, câu bẫy).
 - [ ] **Role 2**: Dùng AI bổ sung Docstring / Mô tả chuẩn cho các hàm trong `src/tools.py`.
 - [ ] **Role 3**: Soạn `CHATBOT_BASELINE_PROMPT` trong file `src/prompts.py`.
-- [ ] **Role 4 (Đầu mối Lắp ráp)**: Gõ `git pull` để kéo file của Role 1, 2, 3 về máy ➔ Vibe Code nối `run_baseline_chatbot()` trong `src/app.py` và bấm chạy thử.
+- [X] **Role 4 (Đầu mối Lắp ráp)**: Gõ `git pull` để kéo file của Role 1, 2, 3 về máy ➔ Vibe Code nối `run_baseline_chatbot()` trong `src/app.py` và bấm chạy thử.
+  - ✅ **ĐÃ XONG (Mốc 2)**: `run_baseline_chatbot()` đã nối xong, chạy thật trên **5/5 test case** với `GeminiProvider` (model `gemini-flash-latest`).
+  - 📊 **Bằng chứng baseline công bằng**: tổng `tool_calls = 0` · mỗi case đúng `llm_calls = 1` (in ra ở bảng tổng kết).
+  - 💾 Log thô cho Role 5: `docs/baseline_raw_log.md` (sinh tự động bằng cờ `--save`).
+  - ▶️ **Lệnh chạy**:
+    ```powershell
+    .venv\Scripts\Activate.ps1
+    python src/app.py --baseline --save          # chạy cả 5 case + ghi log cho Role 5
+    python src/app.py --baseline --case 3        # chỉ chạy 1 case
+    python src/app.py --baseline --provider mock # chạy offline, không cần API key
+    ```
+  - ⚠️ **Lỗi môi trường đã xử lý, cả nhóm chú ý**: model `gemini-2.5-flash` bị Google chặn với API key mới (lỗi `404 no longer available to new users`). Đã đổi mặc định trong `src/providers.py` sang **`gemini-flash-latest`**. Nếu máy bạn báo 404, sửa dòng `LLM_MODEL=gemini-flash-latest` trong `.env`.
+  - 🚫 **Tuyệt đối không** dán API key vào `.env.example` (file này được git theo dõi và sẽ bị push công khai) — chỉ dán vào `.env`.
 - [ ] **Role 5**: Ghi lại phản hồi của Chatbot gốc vào `docs/trace_eval.md` (quan sát xem Chatbot có bị ảo giác/không biết thông tin thực tế không).
 - [ ] 🔄 **Đồng bộ Git Mốc 2**: Cả nhóm lưu file, đẩy code lên Git: `git add .` ➔ `git commit -m "Moc 2: Chatbot Baseline & Tool Specs"` ➔ `git push`.
 

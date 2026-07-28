@@ -2,21 +2,23 @@
 🚀 CORE AGENT APP (Dành cho Role 4: Core Developer / Integrator)
 File chính ghép nối tất cả các thành phần: Tools + Prompts + Test Cases + Multi-Provider.
 
-📍 TRẠNG THÁI HIỆN TẠI: MỐC 1 — PREFLIGHT CHECK (Kiểm tra môi trường sẵn sàng)
-Nhiệm vụ Role 4 ở Mốc 1 là trả lời được câu hỏi: "Môi trường của nhóm đã chạy được chưa?"
-File này KHÔNG chỉ chạy cho có — nó là bộ chẩn đoán (diagnostic) mà CẢ NHÓM cùng gõ
-`python src/app.py` để biết máy mình còn thiếu gì và file của role nào chưa khớp.
+📍 TRẠNG THÁI HIỆN TẠI: MỐC 2 — CHATBOT BASELINE ĐÃ ĐƯỢC NỐI
 
 Lộ trình lắp ráp của Role 4:
-  - MỐC 1 (file này): Preflight check môi trường + kiểm tra tương thích Role 1/2/3.
-  - MỐC 2: Nối hàm run_baseline_chatbot()  ➔ Chatbot 1 LLM call, 0 tool.
-  - MỐC 3: Nối hàm run_react_agent()      ➔ Vòng lặp Thought -> Action -> Observation + Guardrails.
+  - ✅ MỐC 1: Preflight check môi trường + kiểm tra tương thích Role 1/2/3.
+  - ✅ MỐC 2: Nối hàm run_baseline_chatbot() ➔ Chatbot ĐÚNG 1 LLM call, 0 tool.
+  - ⏳ MỐC 3: Nối hàm run_react_agent()      ➔ Vòng lặp Thought -> Action -> Observation + Guardrails.
 
 Cách dùng:
-    python src/app.py            # Chạy preflight check (mặc định)
-    python src/app.py --live     # Preflight + gọi thật 1 câu lên LLM để test API key
+    python src/app.py                        # Preflight check môi trường (mặc định)
+    python src/app.py --live                 # Preflight + gọi thật 1 câu lên LLM để test API key
+    python src/app.py --baseline             # MỐC 2: chạy Chatbot baseline trên TOÀN BỘ test case
+    python src/app.py --baseline --case 3    # Chỉ chạy test case số 3
+    python src/app.py --baseline --provider mock   # Chạy offline, không cần API key
+    python src/app.py --baseline --save      # Ghi log thô ra docs/baseline_raw_log.md cho Role 5
 """
 
+import argparse
 import importlib
 import inspect
 import json
@@ -24,6 +26,8 @@ import logging
 import os
 import platform
 import sys
+import time
+from datetime import datetime
 from pathlib import Path
 
 # Đảm bảo import các module cùng thư mục src/ hoạt động mượt mà
@@ -480,16 +484,190 @@ def print_summary() -> int:
 
 
 # =============================================================================
-# ⏳ CÁC HÀM SẼ LẮP Ở MỐC 2 & MỐC 3 (giữ chỗ để cả nhóm thấy trước kiến trúc)
+# 🤖 MỐC 2 — CHATBOT BASELINE (Cấp độ 2: LLM thuần, KHÔNG có Tool)
 # =============================================================================
 
-def run_baseline_chatbot(user_query: str, provider):
+def _looks_like_provider_error(text: str) -> bool:
+    """Nhận diện chuỗi lỗi do provider trả về (VD: '[Gemini Error]: Chưa cấu hình...')."""
+    head = str(text).lstrip()[:40]
+    return head.startswith("[") and ("Error" in head or "Exception" in head)
+
+
+def _guess_output_type(answer: str) -> str:
     """
-    [MỐC 2 — CHƯA TRIỂN KHAI] Chatbot baseline: system prompt + user message ➔ 1 LLM call.
-    Ràng buộc: KHÔNG gọi tool, KHÔNG nhúng sẵn kết quả tool vào prompt (tool_calls phải = 0).
+    Gợi ý phân loại output theo CODELAB: safe fallback / có thể hallucinated.
+    ⚠️ Chỉ là GỢI Ý bằng từ khóa — Role 5 vẫn phải đọc và chấm lại bằng mắt.
     """
-    print("⏳ [MỐC 2] run_baseline_chatbot() chưa được lắp. Hoàn thành Mốc 1 trước đã!")
-    return None
+    text = str(answer).lower()
+    fallback_signals = (
+        "không có quyền truy cập", "không thể truy cập", "không có dữ liệu",
+        "không tra cứu được", "tôi không chắc", "vui lòng sử dụng hệ thống",
+        "chatbot cơ bản", "không có khả năng tra cứu",
+    )
+    if any(sig in text for sig in fallback_signals):
+        return "🟡 safe fallback (bot tự nhận không có dữ liệu)"
+    return "⚪ cần Role 5 chấm tay (correct / hallucinated?)"
+
+
+def run_baseline_chatbot(user_query: str, provider, system_prompt: str = None, verbose: bool = True) -> dict:
+    """
+    [MỐC 2] Chatbot baseline (Cấp độ 2) — đường cơ sở để so sánh với ReAct Agent.
+
+    Protocol bắt buộc theo CODELAB:
+        system prompt + user message  ➔  ĐÚNG 1 LLM call  ➔  final response
+
+    Ràng buộc (đây là điều làm nó trở thành "baseline công bằng"):
+        - KHÔNG gọi bất kỳ tool nào       ➔ tool_calls luôn = 0
+        - KHÔNG nhúng sẵn kết quả tool vào prompt
+        - KHÔNG lặp nhiều lượt suy luận   ➔ llm_calls luôn = 1
+
+    Returns:
+        dict: {question, answer, tool_calls, llm_calls, elapsed, provider, model, is_error, output_type}
+              ➔ Role 5 dùng dict này để lập bảng so sánh trong docs/trace_eval.md
+    """
+    # Lấy prompt của Role 3 (import mềm để app không chết nếu prompts.py đang lỗi)
+    if system_prompt is None:
+        prompts_mod, err = safe_import("prompts")
+        if not prompts_mod or not getattr(prompts_mod, "CHATBOT_BASELINE_PROMPT", None):
+            print(f"❌ Không lấy được CHATBOT_BASELINE_PROMPT từ src/prompts.py ({err or 'biến rỗng'})")
+            return {}
+        system_prompt = prompts_mod.CHATBOT_BASELINE_PROMPT
+
+    if verbose:
+        print(f"\n💬 [CHATBOT BASELINE] Câu hỏi: {user_query}")
+        print(f"⚙️  System Prompt: {len(system_prompt)} ký tự | 🛠️ Số tool được cấp: 0")
+
+    # ⬇️ ĐÚNG 1 LẦN GỌI LLM DUY NHẤT — không vòng lặp, không tool
+    start = time.perf_counter()
+    answer = provider.generate(user_query, system_prompt=system_prompt)
+    elapsed = time.perf_counter() - start
+
+    is_error = _looks_like_provider_error(answer)
+    result = {
+        "question": user_query,
+        "answer": str(answer).strip(),
+        "tool_calls": 0,      # ⬅️ Bằng chứng baseline: không hề gọi tool
+        "llm_calls": 1,
+        "elapsed": round(elapsed, 2),
+        "provider": provider.__class__.__name__,
+        "model": getattr(provider, "model_name", "mock"),
+        "is_error": is_error,
+        "output_type": "❌ lỗi provider" if is_error else _guess_output_type(answer),
+    }
+
+    if verbose:
+        icon = "❌" if is_error else "🤖"
+        print(f"{icon} Chatbot trả lời ({result['elapsed']}s):")
+        for line in result["answer"].splitlines():
+            print(f"    {line}")
+        print(f"📊 Thống kê: llm_calls=1 | tool_calls=0 | phân loại: {result['output_type']}")
+
+    return result
+
+
+def run_baseline_suite(provider, cases: list, save: bool = False) -> list:
+    """Chạy Chatbot baseline trên toàn bộ test case của Role 1 và in bảng tổng kết."""
+    prompts_mod, err = safe_import("prompts")
+    if not prompts_mod or not getattr(prompts_mod, "CHATBOT_BASELINE_PROMPT", None):
+        print(f"❌ Không lấy được CHATBOT_BASELINE_PROMPT từ src/prompts.py ({err or 'biến rỗng'})")
+        return []
+    system_prompt = prompts_mod.CHATBOT_BASELINE_PROMPT
+
+    print("=" * 78)
+    print("🤖 MỐC 2 — CHẠY CHATBOT BASELINE (Cấp độ 2: LLM thuần, KHÔNG có Tool)")
+    print(f"🔌 Provider: {provider.__class__.__name__} "
+          f"(model: {getattr(provider, 'model_name', 'mock')}) | 📋 Số test case: {len(cases)}")
+    print("=" * 78)
+
+    results = []
+    for case in cases:
+        print(f"\n{'─' * 78}")
+        print(f"🧪 TEST CASE #{case.get('id', '?')} — {case.get('category', '')}")
+        print(f"{'─' * 78}")
+        res = run_baseline_chatbot(case["question"], provider, system_prompt=system_prompt)
+        if res:
+            res["id"] = case.get("id")
+            res["category"] = case.get("category", "")
+            res["expected_behavior"] = case.get("expected_behavior", "")
+            results.append(res)
+
+    # 📊 Bảng tổng kết
+    print("\n" + "=" * 78)
+    print("📊 TỔNG KẾT CHATBOT BASELINE")
+    print("=" * 78)
+    print(f"{'#':<3} {'Loại câu hỏi':<34} {'LLM':<5} {'Tool':<5} {'Giây':<6} Phân loại output")
+    print("-" * 78)
+    for r in results:
+        print(f"{r['id']:<3} {r['category'][:33]:<34} {r['llm_calls']:<5} "
+              f"{r['tool_calls']:<5} {r['elapsed']:<6} {r['output_type']}")
+
+    errors = [r for r in results if r["is_error"]]
+    print("-" * 78)
+    print(f"✅ Bằng chứng baseline công bằng: tổng tool_calls = "
+          f"{sum(r['tool_calls'] for r in results)} (phải = 0) | "
+          f"tổng llm_calls = {sum(r['llm_calls'] for r in results)} (= 1 mỗi case)")
+
+    if errors:
+        print(f"\n⚠️  {len(errors)}/{len(results)} case KHÔNG có câu trả lời thật vì provider báo lỗi.")
+        print("    ➔ Đây là lỗi cấu hình API key, KHÔNG phải lỗi code. Cách xử lý:")
+        print("      1. Lấy API key miễn phí tại https://aistudio.google.com/apikey")
+        print("      2. Dán vào file .env:  GEMINI_API_KEY=AIza...")
+        print("      3. Chạy lại:  python src/app.py --baseline --save")
+        print("    ➔ Hoặc chạy offline để kiểm tra đường ống: python src/app.py --baseline --provider mock")
+    else:
+        print("\n👉 Việc của Role 5: đọc từng câu trả lời ở trên, phân loại thành "
+              "correct / safe fallback / hallucinated rồi dán vào docs/trace_eval.md.")
+
+    if save and results:
+        save_baseline_log(results, provider)
+
+    return results
+
+
+def save_baseline_log(results: list, provider) -> None:
+    """Ghi log thô ra docs/baseline_raw_log.md để Role 5 copy vào docs/trace_eval.md."""
+    out_path = BASE_DIR / "docs" / "baseline_raw_log.md"
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    lines = [
+        "# 📝 LOG THÔ — CHATBOT BASELINE (Mốc 2)",
+        "",
+        f"> File này do `python src/app.py --baseline --save` sinh tự động lúc {stamp}.",
+        f"> Provider: `{provider.__class__.__name__}` — model: `{getattr(provider, 'model_name', 'mock')}`.",
+        "> 👉 Role 5 copy nội dung cần dùng sang `docs/trace_eval.md` rồi chấm điểm.",
+        "",
+        "| # | Loại câu hỏi | LLM calls | Tool calls | Thời gian | Gợi ý phân loại |",
+        "| :--- | :--- | :---: | :---: | :---: | :--- |",
+    ]
+    for r in results:
+        lines.append(
+            f"| {r['id']} | {r['category']} | {r['llm_calls']} | {r['tool_calls']} "
+            f"| {r['elapsed']}s | {r['output_type']} |"
+        )
+    lines.append("")
+
+    for r in results:
+        lines += [
+            f"## Test case #{r['id']} — {r['category']}",
+            "",
+            f"**Câu hỏi**: {r['question']}",
+            "",
+            f"**Kỳ vọng (Role 1)**: {r['expected_behavior']}",
+            "",
+            "**Chatbot baseline trả lời**:",
+            "",
+            "```text",
+            r["answer"],
+            "```",
+            "",
+            f"**Thống kê**: `llm_calls = {r['llm_calls']}` · `tool_calls = {r['tool_calls']}` "
+            f"· `{r['elapsed']}s` · gợi ý phân loại: {r['output_type']}",
+            "",
+            "---",
+            "",
+        ]
+
+    out_path.write_text("\n".join(lines), encoding="utf-8")
+    print(f"\n💾 Đã ghi log thô cho Role 5: {out_path}")
 
 
 def run_react_agent(user_query: str, provider):
@@ -501,9 +679,8 @@ def run_react_agent(user_query: str, provider):
     return None
 
 
-def main() -> int:
-    live = "--live" in sys.argv
-
+def run_preflight(live: bool) -> int:
+    """MỐC 1: Kiểm tra môi trường + độ tương thích file của Role 1/2/3."""
     print("=" * 78)
     print("🏫 ĐẠI HỌC VINUNI - BÀI LAB 3: CHATBOT VS REACT AGENT")
     print("📌 Đề tài 9: Trợ lý Sàng lọc Hồ sơ Tuyển dụng & Hẹn Phỏng vấn")
@@ -519,6 +696,71 @@ def main() -> int:
     check_provider_pipeline(provider_name, live)
 
     return print_summary()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Lab 3 - Chatbot vs ReAct Agent (Đề tài 9: Sàng lọc hồ sơ & Hẹn phỏng vấn)",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    parser.add_argument("--baseline", action="store_true",
+                        help="MỐC 2: Chạy Chatbot baseline (1 LLM call, 0 tool) trên bộ test case")
+    parser.add_argument("--agent", action="store_true",
+                        help="MỐC 3: Chạy ReAct Agent (chưa lắp)")
+    parser.add_argument("--case", type=int, metavar="ID",
+                        help="Chỉ chạy 1 test case theo id (VD: --case 3)")
+    parser.add_argument("--provider", metavar="TÊN",
+                        help="Ép dùng provider: gemini | openai | anthropic | openrouter | mock")
+    parser.add_argument("--save", action="store_true",
+                        help="Ghi log thô ra docs/baseline_raw_log.md cho Role 5")
+    parser.add_argument("--live", action="store_true",
+                        help="Ở chế độ preflight: gọi thật 1 câu lên LLM để test API key")
+    args = parser.parse_args()
+
+    # Không truyền cờ nào ➔ chạy preflight check của Mốc 1
+    if not args.baseline and not args.agent:
+        return run_preflight(args.live)
+
+    # Nạp .env rồi khởi tạo provider
+    dotenv, _ = safe_import("dotenv")
+    if dotenv:
+        dotenv.load_dotenv(BASE_DIR / ".env")
+
+    providers_mod, err = safe_import("providers")
+    if not providers_mod:
+        print(f"❌ Không import được src/providers.py ({err})")
+        print("   ➔ Chạy: python -m pip install -r requirements.txt")
+        return 1
+    provider = providers_mod.get_llm_provider(args.provider)
+
+    cases = load_test_cases()
+    if not cases:
+        return 1
+    if args.case is not None:
+        cases = [c for c in cases if c.get("id") == args.case]
+        if not cases:
+            print(f"❌ Không tìm thấy test case có id = {args.case} trong config/test_cases.json")
+            return 1
+
+    if args.agent:
+        run_react_agent("", provider)
+        return 0
+
+    run_baseline_suite(provider, cases, save=args.save)
+    return 0
+
+
+def load_test_cases() -> list:
+    """Đọc bộ test cases từ config/test_cases.json của Role 1."""
+    path = BASE_DIR / "config" / "test_cases.json"
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        print(f"❌ Không tìm thấy {path} — Role 1 cần push config/test_cases.json.")
+    except json.JSONDecodeError as e:
+        print(f"❌ File config/test_cases.json bị lỗi cú pháp JSON: {e}")
+    return []
 
 
 if __name__ == "__main__":
