@@ -316,6 +316,7 @@ python src/web_app.py                        # Web UI tại http://127.0.0.1:800
 
 ---
 
+
 > 🎯 **Thông điệp của nhóm PEE**: Đừng đánh giá Agent bằng câu trả lời cuối cùng. Ở test case #4, Chatbot và Agent đưa ra **cùng một con số 100%** — nhưng một bên tự nghĩ ra, một bên đo được từ tool. Chỉ trace log mới phân biệt được hai thứ đó, và đó là lý do toàn bộ hệ thống này được xây quanh việc **ghi lại bằng chứng**, không phải quanh việc tạo ra câu trả lời nghe hay.
 
 > [!NOTE]

@@ -382,6 +382,7 @@ AVAILABLE_TOOLS: dict = {
 }
 
 
+
 def call_tool(tool_name: str, **kwargs) -> str:
     """
     Gọi một tool đã đăng ký và luôn trả về chuỗi kết quả hoặc chuỗi lỗi.

@@ -35,6 +35,7 @@ Bạn hỗ trợ bộ phận Nhân sự (HR) trong các tác vụ:
 Hãy bắt đầu bằng cách hỏi người dùng cần hỗ trợ gì về tuyển dụng hôm nay.
 """
 
+
 # ---------------------------------------------------------------------------
 # ReAct Agent Prompt
 # Ép LLM suy luận theo vòng lặp: Thought → Action → Observation → ...

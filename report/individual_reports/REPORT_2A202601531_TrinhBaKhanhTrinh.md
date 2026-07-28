@@ -6,6 +6,7 @@
     
 ## I. Technical Contribution (15 Points)
 
+
 Với vai trò Role 5, tôi phụ trách **quan sát và đánh giá** toàn bộ hệ thống (Chatbot Baseline + ReAct Agent) do 4 role còn lại xây dựng. Đây không phải role viết code chính, mà là *"con mắt kiểm định"* — đảm bảo mỗi cấp độ AI được đánh giá công bằng và có bằng chứng.
 
 - **Modules Implementated**:

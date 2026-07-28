@@ -772,6 +772,7 @@ def parse_llm_step(text: str) -> dict:
     return {"kind": "none", "thought": thought, "raw": text.strip()[:120]}
 
 
+
 def execute_tool_call(tools_mod, tool_name: str, args: list) -> str:
     """
     🛠️ EXECUTOR: gọi tool THẬT và luôn trả về chuỗi Observation, không bao giờ crash.

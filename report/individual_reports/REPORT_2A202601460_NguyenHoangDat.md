@@ -69,6 +69,7 @@ if quoted:
 return [part.strip() for part in raw.split(",") if part.strip()]
 ```
 
+
 Lý do: tham số của đề tài này (nội dung CV, mô tả công việc) **bản thân nó chứa dấu phẩy**, tách bừa theo dấu phẩy sẽ sai — xem phần II.
 
 **(e) Executor có 4 lớp bắt lỗi** (`execute_tool_call()`)

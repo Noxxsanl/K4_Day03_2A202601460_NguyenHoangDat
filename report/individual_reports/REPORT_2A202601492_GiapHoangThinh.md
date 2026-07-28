@@ -40,6 +40,7 @@ _INJECTION_PATTERNS: list[re.Pattern] = [
 ]
 ```
 
+
 #### Highlight 2: Pydantic Validation & Future Date Check ([src/guardrails/execution_guard.py](file:///d:/K4_Day03_2A202601460_NguyenHoangDat/src/guardrails/execution_guard.py#L52-L83))
 ```python
 class ScheduleInterviewParams(BaseModel):
