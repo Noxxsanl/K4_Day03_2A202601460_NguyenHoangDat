@@ -6,6 +6,7 @@ Hỗ trợ chuyển đổi linh hoạt giữa các nhà cung cấp AI chỉ bằ
 import os
 import sys
 import json
+import time
 import requests
 from dotenv import load_dotenv
 
@@ -35,17 +36,32 @@ class GeminiProvider(BaseLLMProvider):
     def generate(self, prompt: str, system_prompt: str = "") -> str:
         if not self.api_key or self.api_key == "your_gemini_api_key_here":
             return "[Gemini Error]: Chưa cấu hình GEMINI_API_KEY trong file .env!"
-        try:
-            from google import genai
-            client = genai.Client(api_key=self.api_key)
-            contents = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
-            response = client.models.generate_content(
-                model=self.model_name,
-                contents=contents
-            )
-            return response.text
-        except Exception as e:
-            return f"[Gemini Exception]: {str(e)}"
+
+        # 🔁 Gói free tier của Gemini giới hạn số request/phút. ReAct Agent gọi LLM
+        # nhiều lần liên tiếp nên rất dễ dính 429 giữa vòng lặp ➔ tự chờ và thử lại
+        # thay vì để cả trace bị hỏng.
+        delays = [0, 20, 40]
+        last_error = ""
+        for attempt, delay in enumerate(delays, start=1):
+            if delay:
+                print(f"    ⏳ Gemini báo hết quota (429), chờ {delay}s rồi thử lại "
+                      f"(lần {attempt}/{len(delays)})...")
+                time.sleep(delay)
+            try:
+                from google import genai
+                client = genai.Client(api_key=self.api_key)
+                contents = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
+                response = client.models.generate_content(
+                    model=self.model_name,
+                    contents=contents
+                )
+                return response.text
+            except Exception as e:
+                last_error = str(e)
+                # Chỉ thử lại với lỗi quá tải/hết quota; lỗi khác (404, sai key) thì dừng ngay
+                if not any(code in last_error for code in ("429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE")):
+                    break
+        return f"[Gemini Exception]: {last_error}"
 
 
 class OpenAIProvider(BaseLLMProvider):

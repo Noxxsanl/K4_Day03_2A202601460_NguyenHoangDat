@@ -83,7 +83,23 @@
 
 - [ ] **Role 3**: Soạn `REACT_SYSTEM_PROMPT` (ép AI sinh Thought -> Action) và đặt `MAX_ITERATIONS (giới hạn số lần lặp)` trong `src/prompts.py`.
 - [ ] **Role 2**: Đảm bảo các hàm trong `src/tools.py` khi gặp lỗi sẽ trả về chuỗi thông báo lỗi chứ không crash code.
-- [ ] **Role 4 (Đầu mối Lắp ráp & Vibe App)**: Gõ `git pull` kéo toàn bộ code mới nhất ➔ Vibe Code lắp vòng lặp ReAct Agent Loop hoàn chỉnh trong `src/app.py` và chạy thử nghiệm.
+- [X] **Role 4 (Đầu mối Lắp ráp & Vibe App)**: Gõ `git pull` kéo toàn bộ code mới nhất ➔ Vibe Code lắp vòng lặp ReAct Agent Loop hoàn chỉnh trong `src/app.py` và chạy thử nghiệm.
+  - ✅ **ĐÃ XONG (Mốc 3)**: `run_react_agent()` gồm đủ **parser ➔ executor ➔ loop ➔ guardrails**:
+    - Parse `Thought` / `Action: tool["a", "b"]` / `Final Answer` (regex chịu được tham số nhiều dòng & có dấu phẩy).
+    - **Cắt bỏ `Observation:` nếu LLM tự bịa** — chỉ app mới được chèn Observation từ tool thật.
+    - Executor ánh xạ tham số theo vị trí ➔ dispatch qua `call_tool()` của Role 2, bắt lỗi: **tool không tồn tại**, **sai số lượng tham số**, **sai cú pháp Action**, **lặp lại y hệt 1 Action**.
+    - Chạm `MAX_ITERATIONS` ➔ trả **Safe Fallback** lịch sự thay vì bịa câu trả lời.
+  - 📊 **Kết quả chạy thật (Gemini)**: case 1, 2 trả lời thẳng không cần tool (đúng kỳ vọng) · **case 3: 3 bước, 2 tool call, kết thúc Final Answer** · case 4 gọi được chuỗi 3 tool `extract_cv_information ➔ analyze_job_description ➔ score_candidate` (100/100 điểm).
+  - 🌟 **Bằng chứng Agent TỰ PHỤC HỒI LỖI** (case 3, xem `docs/agent_raw_log.md`): bước 1 truyền sai 5 tham số ➔ đọc Observation báo lỗi ➔ bước 2 tự bọc lại thành 1 chuỗi ➔ thành công.
+  - ▶️ **Lệnh chạy**:
+    ```powershell
+    python src/app.py --agent --save --max-steps 6   # chạy 5 case + ghi trace log cho Role 5
+    python src/app.py --agent --case 3               # chỉ chạy 1 case
+    python src/app.py --compare                      # chạy CẢ Chatbot lẫn Agent, in bảng so sánh
+    python src/app.py --ask "câu hỏi bẫy..."         # dùng khi bị nhóm khác tấn công ở Mốc 4
+    ```
+  - ⚠️ **Đề nghị Role 3**: nâng `MAX_ITERATIONS` từ **3 lên 6**. Bằng chứng: case 4 cần tối thiểu 5 bước (extract ➔ analyze ➔ score ➔ schedule ➔ Final Answer), để 3 thì Guardrail ngắt khi Agent mới đi được nửa đường.
+  - ⚠️ **Quota Gemini free tier**: ReAct gọi LLM nhiều lần liên tiếp nên rất dễ dính lỗi `429 RESOURCE_EXHAUSTED`. Đã thêm cơ chế **tự chờ và thử lại** trong `src/providers.py`. Nếu vẫn 429 thì quota ngày đã hết ➔ đợi hôm sau hoặc dùng API key khác.
 - [ ] **Role 5**: Trích xuất chuỗi `Thought -> Action -> Observation` dán vào `docs/trace_eval.md`.
 - [ ] **Role 1**: Kiểm tra xem Agent có vượt qua được câu bẫy (Edge Case) bằng phanh Guardrail hay không.
 - [ ] 🔄 **Đồng bộ Git Mốc 3**: Cả nhóm lưu file, đẩy code lên Git: `git add .` ➔ `git commit -m "Moc 3: ReAct Agent Loop & Safeguards"` ➔ `git push`.
