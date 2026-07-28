@@ -2,31 +2,31 @@
   {
     "id": 1,
     "category": "🟢 Đơn giản (Chỉ cần LLM)",
-    "question": "Thủ đô của Việt Nam là gì?",
-    "expected_behavior": "Chatbot trả lời trực tiếp từ kiến thức có sẵn."
+    "question": "Quy trình phỏng vấn chuẩn cho vị trí lập trình viên thường gồm mấy bước?",
+    "expected_behavior": "Chatbot trả lời trực tiếp dựa trên kiến thức chung (không cần gọi tool)."
   },
   {
     "id": 2,
     "category": "🟢 Đơn giản (Chỉ cần LLM)",
-    "question": "Nêu 3 lời khuyên để học tốt lập trình.",
-    "expected_behavior": "Chatbot trả lời trực tiếp từ kiến thức có sẵn."
+    "question": "Làm thế nào để chuẩn bị một CV đẹp và thu hút nhà tuyển dụng?",
+    "expected_behavior": "Chatbot trả lời trực tiếp dựa trên kiến thức chung (không cần gọi tool)."
   },
   {
     "id": 3,
     "category": "🟡 Multi-step (Cần Tool)",
-    "question": "Thời tiết ở Hà Nội hôm nay thế nào và tôi nên mặc gì đi chơi?",
-    "expected_behavior": "Agent gọi tool get_weather('Hà Nội') rồi suy luận trang phục."
+    "question": "Hãy trích xuất thông tin từ CV có nội dung sau:\nNguyen Van A, 3 nam kinh nghiem Python, Django, PostgreSQL, tieng Anh giao tiep.",
+    "expected_behavior": "Agent gọi tool extract_cv_information với nội dung CV được cung cấp."
   },
   {
     "id": 4,
     "category": "🟡 Multi-step (Cần gọi 2 Tools)",
-    "question": "Kiểm tra vé máy bay từ TP.HCM đi Hà Nội ngày mai và dự báo thời tiết ở Hà Nội.",
-    "expected_behavior": "Agent gọi tool search_flights và get_weather để trả lời đầy đủ."
+    "question": "Hãy chấm điểm ứng viên có thông tin 'Nguyen Van A, Python, SQL, Django' với yêu cầu tuyển dụng là 'Python, SQL, Django'. Nếu ứng viên đạt tiêu chuẩn, hãy đặt lịch phỏng vấn cho 'Nguyen Van A' vào ngày 2026-08-15 lúc 14:00.",
+    "expected_behavior": "Agent gọi tool score_candidate trước để chấm điểm. Vì điểm đạt ngưỡng pass (>= 60), Agent tiếp tục gọi tool schedule_interview để xếp lịch hẹn vào ngày 2026-08-15 lúc 14:00."
   },
   {
     "id": 5,
-    "category": "🔴 Edge Case (Bẫy Guardrail)",
-    "question": "Tra cứu thời tiết ở thành phố Atlantis ngày 32/13/2026.",
-    "expected_behavior": "Tool báo lỗi tham số/thất bại, Guardrail ngắt sau 3 bước và trả về thông báo lịch sự."
+    "category": "🔴 Edge Case (Bẫy Guardrail / Lỗi Tool)",
+    "question": "Hãy lên lịch phỏng vấn cho ứng viên 'Nguyen Van A' vào ngày 2020-01-01 lúc 25:00.",
+    "expected_behavior": "Tool schedule_interview sẽ báo lỗi do ngày trong quá khứ hoặc giờ sai định dạng. Agent nhận thông báo lỗi từ tool, ngắt lặp an toàn và phản hồi lịch sự."
   }
 ]
