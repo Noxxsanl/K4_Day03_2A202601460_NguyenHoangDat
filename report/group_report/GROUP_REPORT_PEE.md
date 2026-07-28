@@ -13,7 +13,7 @@
 | Nguyễn Hoàng Đạt | 2A202601460 | Role 4 — Core Developer / Integrator | `src/app.py`, `src/providers.py`, `src/web_app.py` |
 | Vũ Thành Khang | 2A202601866 | Role 2 — Tool Engineer | `src/tools.py` |
 | Giáp Hoàng Thịnh | 2A202601492 | Role 3 — Prompt & Safeguard Engineer | `src/prompts.py`, thiết kế `src/guardrails/`, `src/test_guardrails.py` |
-| Nguyễn Văn Phúc | 2A202601350 | Guardrails Engineer | `src/guardrails/` (3 lớp), `config/test_cases.json` |
+| Nguyễn Văn Phúc | 2A202601350 |Role 1 |  `config/test_cases.json` |
 | Trịnh Bá Khánh Trình | 2A202601531 | Role 5 — Observability & Reviewer | `docs/trace_eval.md` |
 
 ---
