@@ -94,6 +94,37 @@ Final Answer: <Câu trả lời hoàn chỉnh, rõ ràng gửi cho người dùn
 BẮT ĐẦU SUY LUẬN:
 """
 
+# =============================================================================
 # 🛡️ GUARDRAILS CONFIGURATION (PHANH AN TOÀN)
-MAX_ITERATIONS = 3  # Giới hạn tối đa 3 vòng lặp Thought-Action để tránh lặp vô tận
-TIMEOUT_SECONDS = 10  # Timeout cho mỗi lần gọi tool
+# Các hằng số này được đọc bởi src/guardrails/*.py — KHÔNG nhồi vào System Prompt.
+# Tách ra đây để dễ chỉnh ngưỡng mà không ảnh hưởng độ tập trung của LLM.
+# =============================================================================
+
+# --- Phanh vòng lặp ---
+MAX_ITERATIONS = 3       # Giới hạn tối đa vòng lặp Thought→Action để tránh loop vô tận
+TIMEOUT_SECONDS = 10     # Timeout cho mỗi lần gọi tool
+
+# --- Layer 1: Input Guardrails ---
+# Câu từ chối chuẩn khi người dùng hỏi off-topic
+GUARDRAIL_OFF_TOPIC_RESPONSE = (
+    "Xin lỗi, tôi chỉ hỗ trợ các tác vụ liên quan đến tuyển dụng và nhân sự (HR). "
+    "Vui lòng đặt câu hỏi về: quy trình tuyển dụng, đánh giá CV/hồ sơ, "
+    "kỹ năng kỹ thuật cho các vị trí IT, hoặc lên lịch phỏng vấn."
+)
+
+# Câu từ chối khi phát hiện Prompt Injection
+GUARDRAIL_INJECTION_RESPONSE = (
+    "Yêu cầu của bạn chứa nội dung không được phép (có thể là lệnh can thiệp hệ thống). "
+    "Tôi chỉ có thể hỗ trợ các tác vụ HR hợp lệ."
+)
+
+# --- Layer 2: Execution Guardrails ---
+# Các tool yêu cầu human-in-the-loop confirmation trước khi thực thi
+GUARDRAIL_HIGH_RISK_TOOLS: frozenset = frozenset({
+    "schedule_interview",
+    # Mở rộng sau: "send_email", "delete_candidate_record"
+})
+
+# --- Layer 3: Output Guardrails ---
+# Ngưỡng tỉ lệ token lạ để kích hoạt cảnh báo hallucination (0.0 - 1.0)
+GUARDRAIL_HALLUCINATION_THRESHOLD = 0.30  # >30% token không khớp facts → WARNING

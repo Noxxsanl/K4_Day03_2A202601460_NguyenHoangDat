@@ -993,7 +993,271 @@ def run_react_agent(user_query: str, provider, max_steps: int = None, verbose: b
     return result
 
 
+# =============================================================================
+# 🛡️ MỐC 3 (GUARDRAILS) — REACT AGENT + 3 LỚP BẢO VỆ
+# =============================================================================
+
+def run_react_agent_with_guardrails(
+    user_query: str,
+    provider,
+    max_steps: int = None,
+    verbose: bool = True,
+) -> dict:
+    """
+    [MỐC 3 + GUARDRAILS] Vòng lặp ReAct được bọc bởi 3 lớp Middleware bảo vệ:
+
+      Lớp 1 (Input Guard)     : Phát hiện injection, sanitize, kiểm tra chủ đề.
+      Lớp 2 (Execution Guard) : Validate tham số Pydantic, error-feedback-loop,
+                                human-in-the-loop confirmation cho tool nguy hiểm.
+      Lớp 3 (Output Guard)    : Kiểm tra hallucination, enforce JSON nếu cần.
+
+    Tham số y hệt run_react_agent() để dễ hoán đổi trong test suite.
+    """
+    # ── Import Guardrails ────────────────────────────────────────────────
+    try:
+        from guardrails.input_guard import run_input_guard
+        from guardrails.execution_guard import execute_with_guard, HIGH_RISK_TOOLS
+        from guardrails.output_guard import validate_output
+        _guardrails_ok = True
+    except ImportError as e:
+        if verbose:
+            print(f"⚠️  Không import được guardrails ({e}). Chạy lại không có guardrails.")
+        return run_react_agent(user_query, provider, max_steps=max_steps, verbose=verbose)
+
+    prompts_mod, err1 = safe_import("prompts")
+    tools_mod, err2 = safe_import("tools")
+    if not prompts_mod or not tools_mod:
+        print(f"❌ Thiếu module: prompts({err1}) tools({err2})")
+        return {}
+
+    system_prompt = getattr(prompts_mod, "REACT_SYSTEM_PROMPT", "")
+    max_steps = max_steps or getattr(prompts_mod, "MAX_ITERATIONS", 5)
+
+    if verbose:
+        print(f"\n🤖 [REACT AGENT + GUARDRAILS] Câu hỏi: {user_query}")
+        print(f"⚙️  System Prompt: {len(system_prompt)} ký tự | "
+              f"🛠️ Tool được cấp: {len(getattr(tools_mod, 'AVAILABLE_TOOLS', {}))} | "
+              f"🛡️ MAX_ITERATIONS = {max_steps} | 🔒 Guardrails: 3 lớp")
+
+    # ── LAYER 1: Input Guardrails ────────────────────────────────────────
+    if verbose:
+        print("\n  🔒 [LAYER 1] Kiểm tra đầu vào...")
+    input_result = run_input_guard(user_query)
+    if input_result["status"] == "blocked":
+        if verbose:
+            print(f"  🚫 [LAYER 1 BLOCKED] {input_result['reason']}")
+        return {
+            "question": user_query,
+            "final_answer": input_result["response"],
+            "steps": 0,
+            "llm_calls": 0,
+            "tool_calls": 0,
+            "tools_used": [],
+            "faked_observations": 0,
+            "terminated_by": "input_guardrail",
+            "elapsed": 0.0,
+            "trace": [],
+            "guardrail_warnings": [input_result["reason"]],
+        }
+    if verbose:
+        print("  ✅ [LAYER 1 OK] Đầu vào hợp lệ.")
+
+    clean_query = input_result["clean_text"]
+    context_facts: list[str] = []       # Thu thập facts từ tool observations
+    scratchpad = ""
+    trace = []
+    seen_actions = {}
+    llm_calls = tool_calls = faked_obs = 0
+    tools_used, final_answer, terminated_by, last_error = [], None, None, None
+    all_guardrail_warnings: list[str] = []
+
+    start = time.perf_counter()
+    step = 0
+    while step < max_steps:
+        step += 1
+        if verbose:
+            print(f"\n  ┌─ 🔄 Vòng lặp ReAct+Guard — Step {step}/{max_steps} " + "─" * 30)
+
+        # ── 1. Gọi LLM ──────────────────────────────────────────────────
+        prompt = f"Question: {clean_query}\n\n{scratchpad}"
+        raw = provider.generate(prompt, system_prompt=system_prompt)
+        llm_calls += 1
+
+        if _looks_like_provider_error(raw):
+            terminated_by = "provider_error"
+            last_error = str(raw)
+            if verbose:
+                print(f"  │ ❌ Provider lỗi: {_shorten(raw, 200)}")
+            break
+
+        # ── 2. Chặn LLM tự bịa Observation ─────────────────────────────
+        text, faked = _strip_hallucinated_observation(raw)
+        if faked:
+            faked_obs += 1
+            if verbose:
+                print("  │ ⚠️  LLM tự bịa 'Observation:' ➔ đã CẮT BỎ")
+
+        # ── 3. Parse bước ReAct ─────────────────────────────────────────
+        parsed = parse_llm_step(text)
+        if verbose and parsed.get("thought"):
+            print(f"  │ 🧠 Thought: {_shorten(parsed['thought'], 220)}")
+
+        # ── 4a. Final Answer → chạy Output Guard ─────────────────────
+        if parsed["kind"] == "final":
+            final_answer = parsed["answer"]
+            terminated_by = "final_answer"
+
+            # LAYER 3: Output Guard
+            if verbose:
+                print(f"  │ 🏁 Final Answer: {_shorten(final_answer, 400)}")
+                print("  │ 🔒 [LAYER 3] Kiểm tra output...")
+            out_result = validate_output(final_answer, context_facts=context_facts)
+            if out_result["warnings"]:
+                all_guardrail_warnings.extend(out_result["warnings"])
+                if verbose:
+                    for w in out_result["warnings"]:
+                        print(f"  │   ⚠️  {w}")
+            else:
+                if verbose:
+                    print("  │   ✅ [LAYER 3 OK] Output không có dấu hiệu hallucination.")
+
+            trace.append({"step": step, "thought": parsed.get("thought", ""),
+                          "action": None, "observation": None, "final": final_answer})
+            if verbose:
+                print("  └" + "─" * 74)
+            break
+
+        # ── 4b. Xử lý Action ─────────────────────────────────────────
+        action_label = None
+        if parsed["kind"] == "action":
+            tool_name, args = parsed["tool"], parsed["args"]
+            action_label = f"{tool_name}[{', '.join(repr(a) for a in args)}]"
+            if verbose:
+                print(f"  │ 🛠️ Action: {_shorten(action_label, 220)}")
+
+            key = (tool_name, tuple(args))
+            if key in seen_actions:
+                observation = (
+                    f"Lỗi lặp hành động: Bạn đã gọi {tool_name} với đúng tham số này ở bước trước "
+                    f"và nhận kết quả: \"{_shorten(seen_actions[key], 150)}\". "
+                    f"Hãy đổi tham số, đổi tool, hoặc trả về Final Answer."
+                )
+                last_error = observation
+                if verbose:
+                    print("  │ 🔁 Phát hiện LẶP hành động ➔ chèn cảnh báo")
+            else:
+                # LAYER 2: Execution Guard
+                # Ánh xạ args theo vị trí → dict tham số
+                fn = getattr(tools_mod, "AVAILABLE_TOOLS", {}).get(tool_name)
+                if fn:
+                    try:
+                        param_names = [
+                            p.name for p in inspect.signature(fn).parameters.values()
+                            if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+                        ]
+                        params_dict = dict(zip(param_names, args))
+                    except (TypeError, ValueError):
+                        params_dict = {}
+                else:
+                    params_dict = {}
+
+                if verbose:
+                    print("  │ 🔒 [LAYER 2] Validate tham số + kiểm tra high-risk...")
+                exec_result = execute_with_guard(
+                    tool_name=tool_name,
+                    params=params_dict,
+                    tools_mod=tools_mod,
+                    require_confirm=(tool_name in HIGH_RISK_TOOLS),
+                )
+
+                if exec_result["status"] == "ok":
+                    observation = exec_result["result"]
+                    context_facts.append(observation)   # Thu thập fact thật
+                    tool_calls += 1
+                    seen_actions[key] = observation
+                    if tool_name not in tools_used:
+                        tools_used.append(tool_name)
+                    if verbose:
+                        print("  │   ✅ [LAYER 2 OK] Tool thực thi thành công.")
+                else:
+                    # Error Feedback Loop: chuyển lỗi thành context cho LLM
+                    observation = exec_result["error_context"]
+                    last_error = observation
+                    all_guardrail_warnings.append(
+                        f"Layer 2 ({exec_result['status']}): {observation[:80]}"
+                    )
+                    if verbose:
+                        print(f"  │   ❌ [LAYER 2 ERROR] {exec_result['status']}: "
+                              f"{_shorten(observation, 160)}")
+
+        elif parsed["kind"] == "malformed":
+            observation = (
+                f"Lỗi cú pháp Action: không đọc được dòng '{parsed['raw']}'. "
+                f'Cú pháp đúng là: Action: tên_tool["tham_số_1", "tham_số_2"] '
+                f"— nhớ đủ dấu ngoặc vuông và dấu nháy kép."
+            )
+            last_error = observation
+            if verbose:
+                print(f"  │ ❌ Action sai cú pháp: {parsed['raw']}")
+        else:
+            observation = (
+                "Lỗi định dạng: Phản hồi của bạn không có dòng 'Action:' cũng không có "
+                "'Final Answer:'. Hãy trả lời lại đúng định dạng: Thought: ... rồi "
+                'Action: tên_tool["tham_số"] hoặc Final Answer: ...'
+            )
+            last_error = observation
+            if verbose:
+                print("  │ ❌ Không tìm thấy Action lẫn Final Answer")
+
+        if verbose:
+            icon = "❌" if str(observation).strip().lower().startswith(("lỗi", "[tool", "[valid", "[human")) else "👁️"
+            print(f"  │ {icon} Observation: {_shorten(observation, 320)}")
+            print("  └" + "─" * 74)
+
+        scratchpad += f"{text}\nObservation: {observation}\n\n"
+        trace.append({"step": step, "thought": parsed.get("thought", ""),
+                      "action": action_label, "observation": observation, "final": None})
+
+    # ── 6. Guardrail: chạm phanh MAX_ITERATIONS ─────────────────────────
+    if final_answer is None and terminated_by != "provider_error":
+        terminated_by = "guardrail_max_iterations"
+        final_answer = (
+            f"Xin lỗi, tôi chưa thể hoàn tất yêu cầu này một cách chắc chắn. "
+            f"Sau {step} bước tra cứu, hệ thống vẫn chưa trả về dữ liệu hợp lệ "
+            f"(nguyên nhân gần nhất: {_shorten(last_error or 'không xác định', 160)}). "
+            f"Để tránh cung cấp thông tin sai, tôi xin dừng tại đây và đề nghị bạn "
+            f"kiểm tra lại thông tin đầu vào hoặc chuyển yêu cầu cho chuyên viên HR phụ trách."
+        )
+        if verbose:
+            print(f"\n  🛡️ GUARDRAIL KÍCH HOẠT: đã chạm giới hạn {max_steps} bước ➔ ngắt lặp an toàn.")
+            print(f"  🏁 Safe Fallback: {_shorten(final_answer, 400)}")
+
+    elapsed = round(time.perf_counter() - start, 2)
+    result = {
+        "question": user_query,
+        "final_answer": final_answer or "",
+        "steps": step,
+        "llm_calls": llm_calls,
+        "tool_calls": tool_calls,
+        "tools_used": tools_used,
+        "faked_observations": faked_obs,
+        "terminated_by": terminated_by,
+        "elapsed": elapsed,
+        "trace": trace,
+        "guardrail_warnings": all_guardrail_warnings,
+    }
+
+    if verbose:
+        warn_count = len(all_guardrail_warnings)
+        print(f"\n📊 Thống kê+Guard: steps={result['steps']} | llm_calls={result['llm_calls']} | "
+              f"tool_calls={result['tool_calls']} | tools={result['tools_used'] or '(không gọi tool)'} | "
+              f"dừng bởi: {result['terminated_by']} | ⚠️guard_warnings={warn_count} | {elapsed}s")
+
+    return result
+
+
 def run_agent_suite(provider, cases: list, save: bool = False, max_steps: int = None) -> list:
+
     """Chạy ReAct Agent trên toàn bộ test case của Role 1 và in bảng tổng kết."""
     print("=" * 78)
     print("🧠 MỐC 3 — CHẠY REACT AGENT (Cấp độ 3: Thought -> Action -> Observation)")
@@ -1174,6 +1438,8 @@ def main() -> int:
                         help="MỐC 2: Chạy Chatbot baseline (1 LLM call, 0 tool) trên bộ test case")
     parser.add_argument("--agent", action="store_true",
                         help="MỐC 3: Chạy ReAct Agent (Thought -> Action -> Observation + Guardrails)")
+    parser.add_argument("--guardrails", action="store_true",
+                        help="MỐC 3+G: ReAct Agent với 3 lớp Guardrails (Input/Execution/Output Guard)")
     parser.add_argument("--compare", action="store_true",
                         help="Chạy CẢ HAI (Chatbot vs Agent) trên cùng test case rồi in bảng so sánh")
     parser.add_argument("--max-steps", type=int, metavar="N", dest="max_steps",
@@ -1191,7 +1457,7 @@ def main() -> int:
     args = parser.parse_args()
 
     # Không truyền cờ nào ➔ chạy preflight check của Mốc 1
-    if not (args.baseline or args.agent or args.compare or args.ask):
+    if not (args.baseline or args.agent or args.guardrails or args.compare or args.ask):
         return run_preflight(args.live)
 
     # Nạp .env rồi khởi tạo provider
@@ -1208,7 +1474,10 @@ def main() -> int:
 
     # Hỏi tự do 1 câu (không cần test case) — dùng cho Cross-Audit ở Mốc 4
     if args.ask:
-        run_react_agent(args.ask, provider, max_steps=args.max_steps)
+        if args.guardrails:
+            run_react_agent_with_guardrails(args.ask, provider, max_steps=args.max_steps)
+        else:
+            run_react_agent(args.ask, provider, max_steps=args.max_steps)
         return 0
 
     cases = load_test_cases()
@@ -1222,6 +1491,21 @@ def main() -> int:
 
     if args.compare:
         run_compare_suite(provider, cases, max_steps=args.max_steps)
+    elif args.guardrails:
+        # MỐC 3+G: ReAct Agent + 3 lớp Guardrails
+        print("=" * 78)
+        print("🛡️ MỐC 3+G — REACT AGENT + 3 LỚP GUARDRAILS")
+        print("  Layer 1: Input Guard (Injection / Sanitize / Topic Restriction)")
+        print("  Layer 2: Execution Guard (Pydantic Validate / Error Feedback / Human Confirm)")
+        print("  Layer 3: Output Guard (Hallucination Check / Structured Output)")
+        print("=" * 78)
+        for case in cases:
+            print(f"\n{'─' * 78}")
+            print(f"🧪 TEST CASE #{case.get('id', '?')} — {case.get('category', '')}")
+            print(f"{'─' * 78}")
+            run_react_agent_with_guardrails(
+                case["question"], provider, max_steps=args.max_steps
+            )
     elif args.agent:
         run_agent_suite(provider, cases, save=args.save, max_steps=args.max_steps)
     else:
