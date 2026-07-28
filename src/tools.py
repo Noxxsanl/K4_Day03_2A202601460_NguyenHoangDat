@@ -2,48 +2,86 @@
 🛠️ TOOL REGISTRY & SCHEMAS (Dành cho Role 2: Tool & Spec Engineer)
 Nơi khai báo tất cả các "món đồ nghề" mà ReAct Agent có thể gọi.
 """
-
-def get_weather(location: str) -> str:
+def extract_cv_information(cv_content: str) -> str:
     """
-    Tra cứu thời tiết hiện tại của một thành phố.
-    
+    Trích xuất thông tin ứng viên từ CV.
+
     Args:
-        location (str): Tên thành phố (Ví dụ: 'Hà Nội', 'TP.HCM', 'Đà Nẵng')
-        
+        cv_content (str): Nội dung CV của ứng viên.
+
     Returns:
-        str: Thông tin thời tiết chi tiết
+        str: Thông tin ứng viên được trích xuất.
     """
-    loc_lower = location.lower()
-    if "hà nội" in loc_lower or "ha noi" in loc_lower:
-        return "Thời tiết Hà Nội: 28°C, Nắng nhẹ, Độ ẩm 65%."
-    elif "hồ chí minh" in loc_lower or "tp.hcm" in loc_lower or "hcm" in loc_lower:
-        return "Thời tiết TP.HCM: 33°C, Nắng nóng, Có mây."
-    elif "đà nẵng" in loc_lower or "da nang" in loc_lower:
-        return "Thời tiết Đà Nẵng: 30°C, Gió nhẹ, Mát mẻ."
-    else:
-        return f"LỖI: Không tìm thấy dữ liệu thời tiết cho địa điểm '{location}'."
+    return "Thông tin ứng viên đã được trích xuất từ CV."
 
 
-def search_flights(origin: str, destination: str) -> str:
+def analyze_job_description(job_description: str) -> str:
     """
-    Tra cứu chuyến bay giữa hai địa điểm.
-    
+    Phân tích yêu cầu từ mô tả công việc.
+
     Args:
-        origin (str): Nơi đi (Ví dụ: 'TP.HCM')
-        destination (str): Nơi đến (Ví dụ: 'Hà Nội')
-        
+        job_description (str): Nội dung mô tả công việc.
+
     Returns:
-        str: Danh sách chuyến bay khả dụng và giá vé
+        str: Các yêu cầu chính của vị trí tuyển dụng.
+    """
+    return "Đã phân tích yêu cầu của vị trí tuyển dụng."
+
+
+def score_candidate(candidate_info: str, job_requirements: str) -> str:
+    """
+    Chấm điểm mức độ phù hợp của ứng viên.
+
+    Args:
+        candidate_info (str): Thông tin ứng viên.
+        job_requirements (str): Yêu cầu của vị trí tuyển dụng.
+
+    Returns:
+        str: Điểm phù hợp và kết quả sàng lọc.
+    """
+    return "Ứng viên đạt 80/100 điểm và phù hợp để phỏng vấn."
+
+
+def rank_candidates(candidate_scores: str) -> str:
+    """
+    Xếp hạng các ứng viên theo điểm phù hợp.
+
+    Args:
+        candidate_scores (str): Danh sách ứng viên và điểm số.
+
+    Returns:
+        str: Danh sách ứng viên đã được xếp hạng.
+    """
+    return "Đã xếp hạng danh sách ứng viên."
+
+
+def schedule_interview(
+    candidate_name: str,
+    interview_date: str,
+    interview_time: str,
+) -> str:
+    """
+    Tạo lịch phỏng vấn cho ứng viên.
+
+    Args:
+        candidate_name (str): Tên ứng viên.
+        interview_date (str): Ngày phỏng vấn.
+        interview_time (str): Giờ phỏng vấn.
+
+    Returns:
+        str: Thông tin lịch phỏng vấn.
     """
     return (
-        f"Chuyến bay từ {origin} -> {destination} ngày mai:\n"
-        f"1. VN123 (08:00) - Giá: 1,500,000 VNĐ (Còn vé)\n"
-        f"2. VJ456 (14:30) - Giá: 1,200,000 VNĐ (Còn vé)"
+        f"Đã đặt lịch phỏng vấn cho {candidate_name} "
+        f"vào {interview_time}, ngày {interview_date}."
     )
 
 
 # Danh sách các tool được đăng ký để Agent sử dụng
 AVAILABLE_TOOLS = {
-    "get_weather": get_weather,
-    "search_flights": search_flights,
+    "extract_cv_information": extract_cv_information,
+    "analyze_job_description": analyze_job_description,
+    "score_candidate": score_candidate,
+    "rank_candidates": rank_candidates,
+    "schedule_interview": schedule_interview,
 }
