@@ -99,10 +99,10 @@ def extract_cv_information(cv_content: str) -> str:
 
     except (TypeError, ValueError) as exc:
         logger.error("extract_cv_information - loi validation: %s", exc)
-        raise
+        return f"Lỗi: {exc}"
     except Exception as exc:
         logger.exception("extract_cv_information - loi khong mong muon.")
-        raise RuntimeError(f"Loi khi trich xuat CV: {exc}") from exc
+        return f"Lỗi khi trích xuất CV: {exc}"
 
 
 # ---------------------------------------------------------------------------
@@ -146,10 +146,10 @@ def analyze_job_description(job_description: str) -> str:
 
     except (TypeError, ValueError) as exc:
         logger.error("analyze_job_description - loi validation: %s", exc)
-        raise
+        return f"Lỗi: {exc}"
     except Exception as exc:
         logger.exception("analyze_job_description - loi khong mong muon.")
-        raise RuntimeError(f"Loi khi phan tich JD: {exc}") from exc
+        return f"Lỗi khi phân tích mô tả công việc: {exc}"
 
 
 # ---------------------------------------------------------------------------
@@ -205,10 +205,10 @@ def score_candidate(candidate_info: str, job_requirements: str) -> str:
 
     except (TypeError, ValueError) as exc:
         logger.error("score_candidate - loi validation: %s", exc)
-        raise
+        return f"Lỗi: {exc}"
     except Exception as exc:
         logger.exception("score_candidate - loi khong mong muon.")
-        raise RuntimeError(f"Loi khi cham diem ung vien: {exc}") from exc
+        return f"Lỗi khi chấm điểm ứng viên: {exc}"
 
 
 # ---------------------------------------------------------------------------
@@ -280,10 +280,10 @@ def rank_candidates(candidate_scores: str) -> str:
 
     except (TypeError, ValueError) as exc:
         logger.error("rank_candidates - loi validation: %s", exc)
-        raise
+        return f"Lỗi: {exc}"
     except Exception as exc:
         logger.exception("rank_candidates - loi khong mong muon.")
-        raise RuntimeError(f"Loi khi xep hang ung vien: {exc}") from exc
+        return f"Lỗi khi xếp hạng ứng viên: {exc}"
 
 
 # ---------------------------------------------------------------------------
@@ -363,10 +363,10 @@ def schedule_interview(
 
     except (TypeError, ValueError) as exc:
         logger.error("schedule_interview - loi validation: %s", exc)
-        raise
+        return f"Lỗi: {exc}"
     except Exception as exc:
         logger.exception("schedule_interview - loi khong mong muon.")
-        raise RuntimeError(f"Loi khi dat lich phong van: {exc}") from exc
+        return f"Lỗi khi đặt lịch phỏng vấn: {exc}"
 
 
 # ---------------------------------------------------------------------------
@@ -384,30 +384,34 @@ AVAILABLE_TOOLS: dict = {
 
 def call_tool(tool_name: str, **kwargs) -> str:
     """
-    Gọi một tool đã đăng ký trong AVAILABLE_TOOLS.
+    Gọi một tool đã đăng ký và luôn trả về chuỗi kết quả hoặc chuỗi lỗi.
 
     Args:
         tool_name (str): Tên tool cần gọi.
         **kwargs: Các tham số truyền vào tool.
 
     Returns:
-        str: Kết quả trả về từ tool.
-
-    Raises:
-        KeyError: Nếu tool_name không tồn tại trong registry.
+        str: Kết quả của tool hoặc thông báo lỗi.
     """
-    if tool_name not in AVAILABLE_TOOLS:
-        available = ", ".join(f"'{t}'" for t in AVAILABLE_TOOLS)
-        logger.error(
-            "call_tool - tool '%s' khong ton tai. Cac tool hop le: %s",
-            tool_name, available,
-        )
-        raise KeyError(
-            f"Tool '{tool_name}' khong ton tai. "
-            f"Cac tool hop le: {available}"
+    try:
+        if not isinstance(tool_name, str) or not tool_name.strip():
+            return "Lỗi: 'tool_name' phải là chuỗi không rỗng."
+
+        if tool_name not in AVAILABLE_TOOLS:
+            available = ", ".join(AVAILABLE_TOOLS)
+            return (
+                f"Lỗi: Tool '{tool_name}' không tồn tại. "
+                f"Các tool hợp lệ: {available}"
+            )
+
+        logger.info(
+            "call_tool - gọi tool '%s' với tham số: %s",
+            tool_name,
+            list(kwargs.keys()),
         )
 
-    logger.info(
-        "call_tool - goi tool '%s' voi tham so: %s", tool_name, list(kwargs.keys())
-    )
-    return AVAILABLE_TOOLS[tool_name](**kwargs)
+        return AVAILABLE_TOOLS[tool_name](**kwargs)
+
+    except Exception as exc:
+        logger.exception("call_tool - lỗi khi gọi tool.")
+        return f"Lỗi khi gọi tool '{tool_name}': {exc}"
