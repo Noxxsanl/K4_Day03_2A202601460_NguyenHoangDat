@@ -11,7 +11,7 @@
 | **Role 1: Product Architect**           | `config/test_cases.json` | Định hướng bài toán & soạn bộ câu test case                                                       | `________________` |
 | **Role 2: Tool Engineer**               | `src/tools.py`           | Định nghĩa các công cụ (Tools) cho Agent                                                             | `________________` |
 | **Role 3: Prompt Engineer**             | `src/prompts.py`         | Viết ReAct System Prompt & phanh Guardrails                                                               | `________________` |
-| **Role 4: Core Developer / Integrator** | `src/app.py`             | **Đầu mối kéo code/file của nhóm (`git pull`), Vibe Code lắp ráp thành App hoàn chỉnh** | `________________` |
+| **Role 4: Core Developer / Integrator** | `src/app.py`             | **Đầu mối kéo code/file của nhóm (`git pull`), Vibe Code lắp ráp thành App hoàn chỉnh** | `Nguyễn Hoàng Đạt` |
 | **Role 5: Observability**               | `docs/trace_eval.md`     | Lập bảng Scoring Matrix & Soi nhật ký Trace Log                                                        | `________________` |
 
 *Note: Nếu nhóm 6 người, Role 5 tách thành 5A (Trace Analyst) và 5B (Flowchart Architect).*
@@ -33,7 +33,20 @@
 - [ ] **Role 5**: Điền bảng **Scoring Matrix** (chấm 1–5 điểm cho 4 tiêu chí) vào `docs/trace_eval.md`.
 - [ ] **Role 2**: Liệt kê tên các công cụ sẽ tạo trong `src/tools.py` phù hợp với chủ đề nhóm đã chọn.
 - [ ] **Role 3**: Xác định các trường hợp tool có thể bị lỗi (Failure Modes).
-- [ ] **Role 4**: Mở Terminal gõ `python src/app.py` kiểm tra xem môi trường sẵn sàng chưa.
+- [X] **Role 4**: Mở Terminal gõ `python src/app.py` kiểm tra xem môi trường sẵn sàng chưa.
+  - ✅ **ĐÃ XONG (Mốc 1)**: `src/app.py` đã được lắp thành **Preflight Check** — cả nhóm chỉ cần gõ `python src/app.py` là biết máy mình còn thiếu gì. Kết quả trên máy Integrator: **24 ✅ / 3 ⚠️ / 0 ❌ (exit code 0 — môi trường SẴN SÀNG)**.
+  - 🛠️ **Các bước setup cho cả nhóm** (chạy 1 lần, trong thư mục gốc repo):
+    ```powershell
+    py -3.12 -m venv .venv              # KHÔNG dùng python của MSYS/Git Bash
+    .venv\Scripts\Activate.ps1
+    python -m pip install -r requirements.txt
+    Copy-Item .env.example .env         # rồi điền API key vào .env
+    python src/app.py                   # phải ra "MÔI TRƯỜNG SẴN SÀNG"
+    ```
+  - ⚠️ **2 việc tích hợp Preflight đã phát hiện, cần xử lý trước Mốc 3**:
+    1. **Role 3**: `REACT_SYSTEM_PROMPT` còn liệt kê tool cũ (`get_weather`, `search_flights`) — chưa khớp 5 tool tuyển dụng trong `AVAILABLE_TOOLS`. Nếu không sửa, Agent sẽ gọi tool không tồn tại và fail 100%.
+    2. **Role 2**: 5/5 tool đang `raise Exception` khi input sai. CODELAB yêu cầu tool **trả về chuỗi `"LỖI: ..."`** để Agent đọc và tự đổi hướng (nếu vẫn raise, Role 4 phải bọc `try/except` trong `app.py`).
+    3. **Role 1**: `config/test_cases.json` vẫn là bộ đề thời tiết/vé máy bay — cần đổi sang đề tài 9 (Sàng lọc hồ sơ & Hẹn phỏng vấn).
 - [ ] 🤝 **Cả nhóm**: Gật đầu thống nhất bài toán trước khi sang Mốc 2.
 - [ ] 🔄 **Đồng bộ Git Mốc 1**: Cả nhóm lưu file, đẩy code lên Git: `git add .` ➔ `git commit -m "Moc 1: Scoring Matrix & Dinh hinh"` ➔ `git push`.
 
@@ -46,7 +59,19 @@
 - [ ] **Role 1**: Viết bộ **Test Cases** vào file `config/test_cases.json` (câu đơn giản, câu multi-step, câu bẫy).
 - [ ] **Role 2**: Dùng AI bổ sung Docstring / Mô tả chuẩn cho các hàm trong `src/tools.py`.
 - [ ] **Role 3**: Soạn `CHATBOT_BASELINE_PROMPT` trong file `src/prompts.py`.
-- [ ] **Role 4 (Đầu mối Lắp ráp)**: Gõ `git pull` để kéo file của Role 1, 2, 3 về máy ➔ Vibe Code nối `run_baseline_chatbot()` trong `src/app.py` và bấm chạy thử.
+- [X] **Role 4 (Đầu mối Lắp ráp)**: Gõ `git pull` để kéo file của Role 1, 2, 3 về máy ➔ Vibe Code nối `run_baseline_chatbot()` trong `src/app.py` và bấm chạy thử.
+  - ✅ **ĐÃ XONG (Mốc 2)**: `run_baseline_chatbot()` đã nối xong, chạy thật trên **5/5 test case** với `GeminiProvider` (model `gemini-flash-latest`).
+  - 📊 **Bằng chứng baseline công bằng**: tổng `tool_calls = 0` · mỗi case đúng `llm_calls = 1` (in ra ở bảng tổng kết).
+  - 💾 Log thô cho Role 5: `docs/baseline_raw_log.md` (sinh tự động bằng cờ `--save`).
+  - ▶️ **Lệnh chạy**:
+    ```powershell
+    .venv\Scripts\Activate.ps1
+    python src/app.py --baseline --save          # chạy cả 5 case + ghi log cho Role 5
+    python src/app.py --baseline --case 3        # chỉ chạy 1 case
+    python src/app.py --baseline --provider mock # chạy offline, không cần API key
+    ```
+  - ⚠️ **Lỗi môi trường đã xử lý, cả nhóm chú ý**: model `gemini-2.5-flash` bị Google chặn với API key mới (lỗi `404 no longer available to new users`). Đã đổi mặc định trong `src/providers.py` sang **`gemini-flash-latest`**. Nếu máy bạn báo 404, sửa dòng `LLM_MODEL=gemini-flash-latest` trong `.env`.
+  - 🚫 **Tuyệt đối không** dán API key vào `.env.example` (file này được git theo dõi và sẽ bị push công khai) — chỉ dán vào `.env`.
 - [ ] **Role 5**: Ghi lại phản hồi của Chatbot gốc vào `docs/trace_eval.md` (quan sát xem Chatbot có bị ảo giác/không biết thông tin thực tế không).
 - [ ] 🔄 **Đồng bộ Git Mốc 2**: Cả nhóm lưu file, đẩy code lên Git: `git add .` ➔ `git commit -m "Moc 2: Chatbot Baseline & Tool Specs"` ➔ `git push`.
 

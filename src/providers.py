@@ -28,7 +28,9 @@ class GeminiProvider(BaseLLMProvider):
     """Google Gemini Provider"""
     def __init__(self, api_key: str = None, model: str = None):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
-        self.model_name = model or os.getenv("LLM_MODEL") or "gemini-2.5-flash"
+        # Dùng alias 'gemini-flash-latest' vì 'gemini-2.5-flash' đã bị Google
+        # khóa với các API key mới tạo (lỗi 404 "no longer available to new users").
+        self.model_name = model or os.getenv("LLM_MODEL") or "gemini-flash-latest"
         
     def generate(self, prompt: str, system_prompt: str = "") -> str:
         if not self.api_key or self.api_key == "your_gemini_api_key_here":
