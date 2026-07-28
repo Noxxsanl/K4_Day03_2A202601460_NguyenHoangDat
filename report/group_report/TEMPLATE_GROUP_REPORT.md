@@ -1,8 +1,8 @@
 # Group Report: Lab 3 - Production-Grade Agentic System
 
-- **Team Name**: [Name]
+- **Team Name**: PEE
 - **Team Members**: [Nguyễn Hoàng Đạt, Nguyễn Văn Phúc, Giáp Hoàng Thịnh, Vũ Thành Khang, Trịnh Bá Khánh Trình]
-- **Deployment Date**: [2026-07028]
+- **Deployment Date**: [2026-07/28]
 
 ---
 
