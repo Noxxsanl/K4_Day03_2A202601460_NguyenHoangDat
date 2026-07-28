@@ -11,7 +11,7 @@
 | **Role 1: Product Architect**           | `config/test_cases.json` | Định hướng bài toán & soạn bộ câu test case                                                       | `________________` |
 | **Role 2: Tool Engineer**               | `src/tools.py`           | Định nghĩa các công cụ (Tools) cho Agent                                                             | `________________` |
 | **Role 3: Prompt Engineer**             | `src/prompts.py`         | Viết ReAct System Prompt & phanh Guardrails                                                               | `________________` |
-| **Role 4: Core Developer / Integrator** | `src/app.py`             | **Đầu mối kéo code/file của nhóm (`git pull`), Vibe Code lắp ráp thành App hoàn chỉnh** | `________________` |
+| **Role 4: Core Developer / Integrator** | `src/app.py`             | **Đầu mối kéo code/file của nhóm (`git pull`), Vibe Code lắp ráp thành App hoàn chỉnh** | `Nguyễn Hoàng Đạt` |
 | **Role 5: Observability**               | `docs/trace_eval.md`     | Lập bảng Scoring Matrix & Soi nhật ký Trace Log                                                        | `________________` |
 
 *Note: Nếu nhóm 6 người, Role 5 tách thành 5A (Trace Analyst) và 5B (Flowchart Architect).*
@@ -33,7 +33,20 @@
 - [ ] **Role 5**: Điền bảng **Scoring Matrix** (chấm 1–5 điểm cho 4 tiêu chí) vào `docs/trace_eval.md`.
 - [ ] **Role 2**: Liệt kê tên các công cụ sẽ tạo trong `src/tools.py` phù hợp với chủ đề nhóm đã chọn.
 - [ ] **Role 3**: Xác định các trường hợp tool có thể bị lỗi (Failure Modes).
-- [ ] **Role 4**: Mở Terminal gõ `python src/app.py` kiểm tra xem môi trường sẵn sàng chưa.
+- [X] **Role 4**: Mở Terminal gõ `python src/app.py` kiểm tra xem môi trường sẵn sàng chưa.
+  - ✅ **ĐÃ XONG (Mốc 1)**: `src/app.py` đã được lắp thành **Preflight Check** — cả nhóm chỉ cần gõ `python src/app.py` là biết máy mình còn thiếu gì. Kết quả trên máy Integrator: **24 ✅ / 3 ⚠️ / 0 ❌ (exit code 0 — môi trường SẴN SÀNG)**.
+  - 🛠️ **Các bước setup cho cả nhóm** (chạy 1 lần, trong thư mục gốc repo):
+    ```powershell
+    py -3.12 -m venv .venv              # KHÔNG dùng python của MSYS/Git Bash
+    .venv\Scripts\Activate.ps1
+    python -m pip install -r requirements.txt
+    Copy-Item .env.example .env         # rồi điền API key vào .env
+    python src/app.py                   # phải ra "MÔI TRƯỜNG SẴN SÀNG"
+    ```
+  - ⚠️ **2 việc tích hợp Preflight đã phát hiện, cần xử lý trước Mốc 3**:
+    1. **Role 3**: `REACT_SYSTEM_PROMPT` còn liệt kê tool cũ (`get_weather`, `search_flights`) — chưa khớp 5 tool tuyển dụng trong `AVAILABLE_TOOLS`. Nếu không sửa, Agent sẽ gọi tool không tồn tại và fail 100%.
+    2. **Role 2**: 5/5 tool đang `raise Exception` khi input sai. CODELAB yêu cầu tool **trả về chuỗi `"LỖI: ..."`** để Agent đọc và tự đổi hướng (nếu vẫn raise, Role 4 phải bọc `try/except` trong `app.py`).
+    3. **Role 1**: `config/test_cases.json` vẫn là bộ đề thời tiết/vé máy bay — cần đổi sang đề tài 9 (Sàng lọc hồ sơ & Hẹn phỏng vấn).
 - [ ] 🤝 **Cả nhóm**: Gật đầu thống nhất bài toán trước khi sang Mốc 2.
 - [ ] 🔄 **Đồng bộ Git Mốc 1**: Cả nhóm lưu file, đẩy code lên Git: `git add .` ➔ `git commit -m "Moc 1: Scoring Matrix & Dinh hinh"` ➔ `git push`.
 

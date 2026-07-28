@@ -1,101 +1,525 @@
 """
-🚀 CORE AGENT APP (Dành cho Role 4: Core Agent Developer)
+🚀 CORE AGENT APP (Dành cho Role 4: Core Developer / Integrator)
 File chính ghép nối tất cả các thành phần: Tools + Prompts + Test Cases + Multi-Provider.
+
+📍 TRẠNG THÁI HIỆN TẠI: MỐC 1 — PREFLIGHT CHECK (Kiểm tra môi trường sẵn sàng)
+Nhiệm vụ Role 4 ở Mốc 1 là trả lời được câu hỏi: "Môi trường của nhóm đã chạy được chưa?"
+File này KHÔNG chỉ chạy cho có — nó là bộ chẩn đoán (diagnostic) mà CẢ NHÓM cùng gõ
+`python src/app.py` để biết máy mình còn thiếu gì và file của role nào chưa khớp.
+
+Lộ trình lắp ráp của Role 4:
+  - MỐC 1 (file này): Preflight check môi trường + kiểm tra tương thích Role 1/2/3.
+  - MỐC 2: Nối hàm run_baseline_chatbot()  ➔ Chatbot 1 LLM call, 0 tool.
+  - MỐC 3: Nối hàm run_react_agent()      ➔ Vòng lặp Thought -> Action -> Observation + Guardrails.
+
+Cách dùng:
+    python src/app.py            # Chạy preflight check (mặc định)
+    python src/app.py --live     # Preflight + gọi thật 1 câu lên LLM để test API key
 """
 
+import importlib
+import inspect
 import json
+import logging
 import os
+import platform
 import sys
-from dotenv import load_dotenv
+from pathlib import Path
 
 # Đảm bảo import các module cùng thư mục src/ hoạt động mượt mà
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR = Path(__file__).resolve().parent.parent
+SRC_DIR = BASE_DIR / "src"
+sys.path.insert(0, str(SRC_DIR))
 
 # Đảm bảo in ra Tiếng Việt và Emojis không bị lỗi trên Windows Console
-if sys.stdout.encoding != 'utf-8':
+if sys.stdout.encoding != "utf-8":
     try:
-        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stdout.reconfigure(encoding="utf-8")
     except Exception:
         pass
 
-# Import các thành phần từ file của Role 2, Role 3 & Multi-Provider Adapter
-from tools import AVAILABLE_TOOLS, get_weather, search_flights
-from prompts import CHATBOT_BASELINE_PROMPT, REACT_SYSTEM_PROMPT, MAX_ITERATIONS
-from providers import get_llm_provider
+MIN_PYTHON = (3, 10)
 
-load_dotenv()
+# Thư viện bắt buộc phải có để app import được (module_name -> tên gói pip)
+REQUIRED_PACKAGES = {
+    "dotenv": "python-dotenv",
+    "requests": "requests",
+}
 
-def load_test_cases():
-    """Đọc bộ test cases từ config/test_cases.json của Role 1"""
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    config_path = os.path.join(base_dir, "config", "test_cases.json")
-    
-    # Fallback kiểm tra nếu file ở thư mục hiện tại
-    if not os.path.exists(config_path):
-        config_path = "test_cases.json"
-        
-    with open(config_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+# Thư viện chỉ cần khi dùng provider tương ứng (provider -> (module, tên gói pip))
+PROVIDER_PACKAGES = {
+    "gemini": ("google.genai", "google-genai"),
+    "openai": ("openai", "openai"),
+    "anthropic": ("anthropic", "anthropic"),
+    "openrouter": ("requests", "requests"),
+    "mock": (None, None),
+}
 
+# Tên biến API key tương ứng từng provider
+PROVIDER_KEYS = {
+    "gemini": "GEMINI_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+    "mock": None,
+}
+
+OK, WARN, FAIL = "OK", "WARN", "FAIL"
+ICONS = {OK: "✅", WARN: "⚠️ ", FAIL: "❌"}
+
+# Kết quả các bước kiểm tra: list các dict {level, label, detail, hint}
+RESULTS = []
+
+
+def add(level: str, label: str, detail: str, hint: str = "") -> None:
+    """Ghi lại kết quả một bước kiểm tra và in ngay ra màn hình."""
+    RESULTS.append({"level": level, "label": label, "detail": detail, "hint": hint})
+    print(f"  {ICONS[level]} {label}: {detail}")
+    if hint and level != OK:
+        print(f"      ↳ 🔧 Cách sửa: {hint}")
+
+
+def section(title: str) -> None:
+    print(f"\n{title}")
+    print("-" * 78)
+
+
+def safe_import(module_name: str):
+    """Import module và trả về (module, error_message). Không bao giờ raise."""
+    try:
+        return importlib.import_module(module_name), None
+    except Exception as e:  # noqa: BLE001 - cần bắt cả ImportError, SyntaxError của file bạn khác
+        return None, f"{type(e).__name__}: {e}"
+
+
+# =============================================================================
+# 1. KIỂM TRA PYTHON & HỆ ĐIỀU HÀNH
+# =============================================================================
+
+def check_python() -> None:
+    section("🐍 [1/6] PYTHON & HỆ ĐIỀU HÀNH")
+
+    version = sys.version_info
+    version_str = f"{version.major}.{version.minor}.{version.micro}"
+    if version[:2] >= MIN_PYTHON:
+        add(OK, "Phiên bản Python", f"{version_str} (yêu cầu >= {MIN_PYTHON[0]}.{MIN_PYTHON[1]})")
+    else:
+        add(
+            FAIL,
+            "Phiên bản Python",
+            f"{version_str} quá cũ (yêu cầu >= {MIN_PYTHON[0]}.{MIN_PYTHON[1]})",
+            "Cài Python 3.10+ tại python.org rồi tạo lại virtual environment.",
+        )
+
+    add(OK, "Hệ điều hành", f"{platform.system()} {platform.release()}")
+
+    # Đang chạy trong virtual environment hay python toàn hệ thống?
+    in_venv = sys.prefix != getattr(sys, "base_prefix", sys.prefix)
+    if in_venv:
+        add(OK, "Virtual environment", f"Đang chạy trong venv: {sys.prefix}")
+    else:
+        add(
+            WARN,
+            "Virtual environment",
+            "Đang chạy bằng Python toàn hệ thống, không phải .venv",
+            r"Chạy: .venv\Scripts\Activate.ps1  (PowerShell) rồi gõ lại python src/app.py",
+        )
+
+    add(OK, "Thư mục gốc dự án", str(BASE_DIR))
+
+
+# =============================================================================
+# 2. KIỂM TRA THƯ VIỆN
+# =============================================================================
+
+def check_packages() -> None:
+    section("📦 [2/6] THƯ VIỆN PYTHON")
+
+    for module_name, pip_name in REQUIRED_PACKAGES.items():
+        mod, err = safe_import(module_name)
+        if mod:
+            add(OK, f"Thư viện {pip_name}", "Đã cài đặt")
+        else:
+            add(
+                FAIL,
+                f"Thư viện {pip_name}",
+                f"Chưa cài được ({err})",
+                "Chạy: python -m pip install -r requirements.txt",
+            )
+
+
+# =============================================================================
+# 3. KIỂM TRA CẤU HÌNH .env & LLM PROVIDER
+# =============================================================================
+
+def check_env_config() -> str:
+    section("🔑 [3/6] CẤU HÌNH .env & LLM PROVIDER")
+
+    env_path = BASE_DIR / ".env"
+    if env_path.exists():
+        add(OK, "File .env", "Đã tồn tại")
+        dotenv, _ = safe_import("dotenv")
+        if dotenv:
+            dotenv.load_dotenv(env_path)
+    else:
+        add(
+            WARN,
+            "File .env",
+            "Chưa có (hệ thống sẽ tự chạy chế độ mock offline)",
+            "Chạy: Copy-Item .env.example .env  rồi điền API key vào.",
+        )
+
+    provider_name = (os.getenv("LLM_PROVIDER") or "mock").lower().strip()
+    add(OK, "LLM_PROVIDER", f"'{provider_name}'")
+
+    # Kiểm tra API key của provider đang chọn
+    key_var = PROVIDER_KEYS.get(provider_name)
+    if key_var:
+        key_value = (os.getenv(key_var) or "").strip()
+        placeholder = key_value.startswith("your_") or not key_value
+        if placeholder:
+            add(
+                WARN,
+                f"API key {key_var}",
+                "Chưa điền (vẫn còn giá trị mẫu) ➔ chưa gọi được LLM thật",
+                f"Mở file .env, dán key thật vào {key_var}=... "
+                f"(Mốc 1 chưa cần key, nhưng Mốc 2 cần để thấy Chatbot ảo giác).",
+            )
+        else:
+            add(OK, f"API key {key_var}", f"Đã điền ({len(key_value)} ký tự)")
+    else:
+        add(
+            WARN,
+            "API key",
+            "Đang dùng provider 'mock' — không gọi LLM thật, chạy offline",
+            "Đổi LLM_PROVIDER trong .env sang gemini/openai/anthropic/openrouter khi có key.",
+        )
+
+    # Kiểm tra SDK tương ứng provider đã được cài chưa
+    module_name, pip_name = PROVIDER_PACKAGES.get(provider_name, (None, None))
+    if module_name:
+        mod, err = safe_import(module_name)
+        if mod:
+            add(OK, f"SDK cho '{provider_name}'", f"{pip_name} đã cài đặt")
+        else:
+            add(
+                FAIL,
+                f"SDK cho '{provider_name}'",
+                f"Thiếu gói {pip_name} ({err})",
+                f"Chạy: python -m pip install {pip_name}",
+            )
+
+    model = (os.getenv("LLM_MODEL") or "").strip()
+    add(OK, "LLM_MODEL", model or "(để trống ➔ dùng model mặc định của provider)")
+
+    return provider_name
+
+
+# =============================================================================
+# 4. KIỂM TRA config/test_cases.json (Role 1)
+# =============================================================================
+
+def check_test_cases() -> list:
+    section("🟢 [4/6] BỘ TEST CASES — config/test_cases.json (Role 1)")
+
+    path = BASE_DIR / "config" / "test_cases.json"
+    if not path.exists():
+        add(FAIL, "File test_cases.json", f"Không tìm thấy tại {path}",
+            "Role 1 cần tạo file config/test_cases.json rồi git push.")
+        return []
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            cases = json.load(f)
+    except json.JSONDecodeError as e:
+        add(FAIL, "Cú pháp JSON", f"File bị lỗi JSON: {e}",
+            "Kiểm tra dấu phẩy / ngoặc trong config/test_cases.json (dùng jsonlint hoặc VS Code).")
+        return []
+
+    add(OK, "Đọc file JSON", f"Thành công, có {len(cases)} test case")
+
+    # Kiểm tra từng case có đủ field cần thiết cho vòng chạy Mốc 2 & 3
+    required_fields = ("id", "category", "question")
+    problems = [
+        f"case #{i + 1} thiếu field {[f for f in required_fields if f not in c]}"
+        for i, c in enumerate(cases)
+        if not all(f in c for f in required_fields)
+    ]
+    if problems:
+        add(WARN, "Cấu trúc test case", "; ".join(problems),
+            "Mỗi case cần tối thiểu: id, category, question.")
+    else:
+        add(OK, "Cấu trúc test case", f"Đủ field {required_fields} cho cả {len(cases)} case")
+
+    if len(cases) < 5:
+        add(WARN, "Số lượng test case", f"Chỉ có {len(cases)}/5 case tối thiểu",
+            "Rubric yêu cầu >= 5 case: 2 đơn giản + multi-step + cần 2 tool + edge case.")
+    else:
+        add(OK, "Số lượng test case", f"{len(cases)} case (>= 5 theo rubric)")
+
+    for c in cases:
+        print(f"      #{c.get('id', '?')} [{c.get('category', 'chưa phân loại')}] {c.get('question', '')[:60]}")
+
+    return cases
+
+
+# =============================================================================
+# 5. KIỂM TRA src/tools.py (Role 2)
+# =============================================================================
+
+def check_tools():
+    section("🛠️ [5/6] TOOL REGISTRY — src/tools.py (Role 2)")
+
+    tools_mod, err = safe_import("tools")
+    if not tools_mod:
+        add(FAIL, "Import src/tools.py", f"Không import được ({err})",
+            "Mở src/tools.py xem lỗi cú pháp, hoặc chờ Role 2 git push bản mới.")
+        return None
+
+    add(OK, "Import src/tools.py", "Thành công")
+
+    registry = getattr(tools_mod, "AVAILABLE_TOOLS", None)
+    if not isinstance(registry, dict) or not registry:
+        add(FAIL, "Dictionary AVAILABLE_TOOLS", "Không tồn tại hoặc đang rỗng",
+            "Role 2 cần khai báo AVAILABLE_TOOLS = {'ten_tool': ham_tool, ...} ở cuối src/tools.py.")
+        return tools_mod
+
+    add(OK, "Dictionary AVAILABLE_TOOLS", f"Đã đăng ký {len(registry)} tool")
+
+    # Liệt kê signature + docstring của từng tool để cả nhóm biết gọi thế nào
+    no_doc = []
+    for name, fn in registry.items():
+        if not callable(fn):
+            add(FAIL, f"Tool '{name}'", "Giá trị trong registry không phải là hàm gọi được",
+                "Kiểm tra lại AVAILABLE_TOOLS: value phải là tên hàm, không có dấu ngoặc ().")
+            continue
+        try:
+            sig = str(inspect.signature(fn))
+        except (TypeError, ValueError):
+            sig = "(không đọc được signature)"
+        doc = (inspect.getdoc(fn) or "").strip().splitlines()
+        summary = doc[0] if doc else ""
+        if not summary:
+            no_doc.append(name)
+        print(f"      • {name}{sig} — {summary or '⚠️ CHƯA CÓ DOCSTRING'}")
+
+    if no_doc:
+        add(WARN, "Docstring của tool", f"{len(no_doc)} tool chưa có docstring: {', '.join(no_doc)}",
+            "Rubric chấm 'Tool description rõ ràng' ➔ Role 2 bổ sung docstring input/output/error.")
+    else:
+        add(OK, "Docstring của tool", "Tất cả tool đều có mô tả")
+
+    # 🔍 LINT HỢP ĐỒNG TOOL: tool phải TRẢ VỀ chuỗi lỗi, KHÔNG được raise làm crash Agent
+    logging.getLogger("tools").setLevel(logging.CRITICAL)  # tạm tắt log ồn khi thử input sai
+    raising = []
+    for name, fn in registry.items():
+        if not callable(fn):
+            continue
+        try:
+            params = [
+                p for p in inspect.signature(fn).parameters.values()
+                if p.default is inspect.Parameter.empty
+                and p.kind not in (p.VAR_POSITIONAL, p.VAR_KEYWORD)
+            ]
+            fn(*[""] * len(params))  # gọi với tham số rỗng - kịch bản người dùng nhập sai
+        except Exception as e:  # noqa: BLE001
+            raising.append(f"{name} ➔ raise {type(e).__name__}")
+    logging.getLogger("tools").setLevel(logging.INFO)
+
+    if raising:
+        add(
+            WARN,
+            "Hợp đồng xử lý lỗi (error contract)",
+            f"{len(raising)}/{len(registry)} tool RAISE EXCEPTION khi input sai: {'; '.join(raising)}",
+            "CODELAB yêu cầu tool trả về chuỗi 'LỖI: ...' thay vì raise, để Agent đọc và tự đổi hướng "
+            "(nếu raise, Role 4 buộc phải bọc try/except trong app.py ở Mốc 3).",
+        )
+    else:
+        add(OK, "Hợp đồng xử lý lỗi (error contract)", "Mọi tool trả về chuỗi lỗi, không raise")
+
+    if callable(getattr(tools_mod, "call_tool", None)):
+        add(OK, "Hàm call_tool()", "Có sẵn — Role 4 sẽ dùng để dispatch tool ở Mốc 3")
+
+    return tools_mod
+
+
+# =============================================================================
+# 6. KIỂM TRA src/prompts.py (Role 3) + ĐỘ KHỚP VỚI TOOL
+# =============================================================================
+
+def check_prompts(tools_mod) -> None:
+    section("🧠 [6/6] PROMPTS & GUARDRAILS — src/prompts.py (Role 3)")
+
+    prompts_mod, err = safe_import("prompts")
+    if not prompts_mod:
+        add(FAIL, "Import src/prompts.py", f"Không import được ({err})",
+            "Mở src/prompts.py xem lỗi cú pháp, hoặc chờ Role 3 git push bản mới.")
+        return
+
+    add(OK, "Import src/prompts.py", "Thành công")
+
+    for var in ("CHATBOT_BASELINE_PROMPT", "REACT_SYSTEM_PROMPT"):
+        value = getattr(prompts_mod, var, None)
+        if isinstance(value, str) and value.strip():
+            add(OK, f"Biến {var}", f"Đã có ({len(value)} ký tự)")
+        else:
+            add(FAIL, f"Biến {var}", "Chưa khai báo hoặc đang rỗng",
+                f"Role 3 cần soạn {var} trong src/prompts.py.")
+
+    max_iter = getattr(prompts_mod, "MAX_ITERATIONS", None)
+    if isinstance(max_iter, int) and max_iter > 0:
+        add(OK, "Guardrail MAX_ITERATIONS", f"{max_iter} vòng lặp (phanh an toàn đã cài)")
+    else:
+        add(FAIL, "Guardrail MAX_ITERATIONS", "Chưa khai báo hoặc giá trị không hợp lệ",
+            "Role 3 cần đặt MAX_ITERATIONS = 5 (số nguyên > 0) trong src/prompts.py.")
+
+    # 🔍 KIỂM TRA ĐỘ KHỚP (DRIFT) GIỮA PROMPT VÀ TOOL REGISTRY
+    # Đây là lỗi tích hợp kinh điển: Role 2 đổi tên tool nhưng prompt của Role 3 vẫn ghi tên cũ
+    # ➔ Agent sẽ gọi tool không tồn tại và fail 100% ở Mốc 3.
+    react_prompt = getattr(prompts_mod, "REACT_SYSTEM_PROMPT", "") or ""
+    registry = getattr(tools_mod, "AVAILABLE_TOOLS", {}) if tools_mod else {}
+    if react_prompt and registry:
+        missing = [name for name in registry if name not in react_prompt]
+        if missing:
+            add(
+                WARN,
+                "Độ khớp Prompt ↔ Tool",
+                f"{len(missing)}/{len(registry)} tool CHƯA được mô tả trong REACT_SYSTEM_PROMPT: "
+                f"{', '.join(missing)}",
+                "Role 3 cập nhật danh sách tool trong REACT_SYSTEM_PROMPT cho khớp AVAILABLE_TOOLS "
+                "(mẹo: import TOOLS_DESCRIPTION từ tools.py để không bao giờ bị lệch). "
+                "BẮT BUỘC xong trước Mốc 3.",
+            )
+        else:
+            add(OK, "Độ khớp Prompt ↔ Tool", "Prompt đã mô tả đủ tên các tool trong registry")
+
+
+# =============================================================================
+# 7. SMOKE TEST PIPELINE PROVIDER
+# =============================================================================
+
+def check_provider_pipeline(provider_name: str, live: bool):
+    section("🔌 SMOKE TEST — src/providers.py (Multi-Provider Adapter)")
+
+    providers_mod, err = safe_import("providers")
+    if not providers_mod:
+        add(FAIL, "Import src/providers.py", f"Không import được ({err})",
+            "Thường do thiếu thư viện ➔ chạy python -m pip install -r requirements.txt")
+        return None
+
+    add(OK, "Import src/providers.py", "Thành công")
+
+    try:
+        provider = providers_mod.get_llm_provider()
+    except Exception as e:  # noqa: BLE001
+        add(FAIL, "Khởi tạo provider", f"{type(e).__name__}: {e}",
+            "Kiểm tra lại LLM_PROVIDER trong .env.")
+        return None
+
+    model_name = getattr(provider, "model_name", "Offline Mock Mode")
+    add(OK, "Khởi tạo provider", f"{provider.__class__.__name__} (model: {model_name})")
+
+    is_mock = provider.__class__.__name__ == "MockProvider"
+    if is_mock or live:
+        try:
+            answer = provider.generate("Xin chào, đây là bài test kết nối. Trả lời ngắn gọn.")
+            preview = " ".join(str(answer).split())[:120]
+            failed = str(answer).startswith("[") and "Error" in str(answer)
+            add(
+                WARN if failed else OK,
+                "Gọi thử LLM",
+                preview,
+                "Provider trả về lỗi ➔ kiểm tra API key và tên model trong .env." if failed else "",
+            )
+        except Exception as e:  # noqa: BLE001
+            add(FAIL, "Gọi thử LLM", f"{type(e).__name__}: {e}",
+                "Kiểm tra mạng, API key và tên model.")
+    else:
+        add(OK, "Gọi thử LLM", "Bỏ qua để không tốn quota (thêm cờ --live nếu muốn gọi thật)")
+
+    return provider
+
+
+# =============================================================================
+# 📋 TỔNG KẾT
+# =============================================================================
+
+def print_summary() -> int:
+    fails = [r for r in RESULTS if r["level"] == FAIL]
+    warns = [r for r in RESULTS if r["level"] == WARN]
+
+    print("\n" + "=" * 78)
+    print("📋 TỔNG KẾT PREFLIGHT CHECK (MỐC 1)")
+    print("=" * 78)
+    print(f"  ✅ Đạt: {len(RESULTS) - len(fails) - len(warns)}   ⚠️  Cảnh báo: {len(warns)}   ❌ Lỗi chặn: {len(fails)}")
+
+    if fails:
+        print("\n❌ MÔI TRƯỜNG CHƯA SẴN SÀNG — cần xử lý các lỗi chặn sau:")
+        for i, r in enumerate(fails, 1):
+            print(f"  {i}. [{r['label']}] {r['detail']}")
+            if r["hint"]:
+                print(f"     ➔ {r['hint']}")
+    else:
+        print("\n✅ MÔI TRƯỜNG SẴN SÀNG — `python src/app.py` chạy được, không có lỗi chặn.")
+
+    if warns:
+        print("\n⚠️  VIỆC CẦN LÀM TIẾP (không chặn Mốc 1, nhưng phải xong trước Mốc 2/3):")
+        for i, r in enumerate(warns, 1):
+            print(f"  {i}. [{r['label']}] {r['detail']}")
+            if r["hint"]:
+                print(f"     ➔ {r['hint']}")
+
+    print("\n🗺️  LỘ TRÌNH LẮP RÁP CỦA ROLE 4:")
+    print("  ✅ Mốc 1: Preflight check môi trường (file này) — ĐANG Ở ĐÂY")
+    print("  ⏳ Mốc 2: git pull ➔ nối run_baseline_chatbot() chạy 1 LLM call, 0 tool")
+    print("  ⏳ Mốc 3: git pull ➔ nối run_react_agent() với parser + executor + MAX_ITERATIONS")
+    print("  ⏳ Mốc 4: Cross-audit liên nhóm + Hybrid Flowchart")
+    print("=" * 78)
+
+    return 1 if fails else 0
+
+
+# =============================================================================
+# ⏳ CÁC HÀM SẼ LẮP Ở MỐC 2 & MỐC 3 (giữ chỗ để cả nhóm thấy trước kiến trúc)
+# =============================================================================
 
 def run_baseline_chatbot(user_query: str, provider):
     """
-    Dựng Chatbot gốc (Baseline) không có công cụ.
+    [MỐC 2 — CHƯA TRIỂN KHAI] Chatbot baseline: system prompt + user message ➔ 1 LLM call.
+    Ràng buộc: KHÔNG gọi tool, KHÔNG nhúng sẵn kết quả tool vào prompt (tool_calls phải = 0).
     """
-    print(f"\n💬 [CHATBOT BASELINE] Câu hỏi: {user_query}")
-    print(f"⚙️ System Prompt: {CHATBOT_BASELINE_PROMPT.strip()}")
-    
-    # Gọi LLM Provider thực hiện sinh câu trả lời
-    response = provider.generate(user_query, system_prompt=CHATBOT_BASELINE_PROMPT)
-    print(f"🤖 Chatbot trả lời:\n{response}")
+    print("⏳ [MỐC 2] run_baseline_chatbot() chưa được lắp. Hoàn thành Mốc 1 trước đã!")
+    return None
 
 
 def run_react_agent(user_query: str, provider):
     """
-    Dựng vòng lặp ReAct Agent (Thought -> Action -> Observation) có Guardrails.
+    [MỐC 3 — CHƯA TRIỂN KHAI] Vòng lặp ReAct: LLM sinh Thought/Action ➔ app parse Action
+    ➔ app gọi tool thật ➔ app chèn Observation ➔ lặp lại, có phanh MAX_ITERATIONS.
     """
-    print(f"\n🤖 [REACT AGENT] Câu hỏi: {user_query}")
-    step = 0
-    
-    while step < MAX_ITERATIONS:
-        step += 1
-        print(f"\n--- 🔄 Vòng lặp ReAct (Step {step}/{MAX_ITERATIONS}) ---")
-        
-        if step == 1:
-            print("🧠 Thought: Câu hỏi này cần tra cứu thời tiết thời gian thực.")
-            print("🛠️ Action: get_weather['Hà Nội']")
-            
-            # Thực thi tool
-            obs = get_weather("Hà Nội")
-            print(f"👁️ Observation: {obs}")
-            
-        elif step == 2:
-            print("🧠 Thought: Tôi đã có thông tin thời tiết Hà Nội, giờ tôi có thể tư vấn trang phục.")
-            print("🏁 Final Answer: Thời tiết Hà Nội hôm nay 28°C, nắng nhẹ. Bạn nên mặc áo phông thoáng mát!")
-            break
-            
-    if step >= MAX_ITERATIONS:
-        print(f"🛡️ GUARDRAIL TRIGGERED: Đã đạt giới hạn tối đa {MAX_ITERATIONS} bước. Ngắt lặp an toàn!")
+    print("⏳ [MỐC 3] run_react_agent() chưa được lắp. Hoàn thành Mốc 1 & 2 trước đã!")
+    return None
+
+
+def main() -> int:
+    live = "--live" in sys.argv
+
+    print("=" * 78)
+    print("🏫 ĐẠI HỌC VINUNI - BÀI LAB 3: CHATBOT VS REACT AGENT")
+    print("📌 Đề tài 9: Trợ lý Sàng lọc Hồ sơ Tuyển dụng & Hẹn Phỏng vấn")
+    print("🔧 MỐC 1 — PREFLIGHT CHECK (Role 4: Core Developer / Integrator)")
+    print("=" * 78)
+
+    check_python()
+    check_packages()
+    provider_name = check_env_config()
+    check_test_cases()
+    tools_mod = check_tools()
+    check_prompts(tools_mod)
+    check_provider_pipeline(provider_name, live)
+
+    return print_summary()
 
 
 if __name__ == "__main__":
-    print("==================================================")
-    print("🏫 ĐẠI HỌC VINUNI - BÀI LAB 3: CHATBOT VS REACT AGENT")
-    print("==================================================")
-    
-    # Khởi tạo Multi-Provider LLM Adapter (Đọc từ biến môi trường LLM_PROVIDER)
-    provider = get_llm_provider()
-    model_name = getattr(provider, "model_name", "Offline Mock Mode")
-    print(f"🔌 LLM Provider đang hoạt động: {provider.__class__.__name__} (Model: {model_name})")
-    
-    tests = load_test_cases()
-    print(f"✅ Đã tải thành công {len(tests)} Test Cases từ config/test_cases.json\n")
-    
-    # Chạy thử câu test số 3
-    sample_query = tests[2]["question"]
-    
-    print("--- DEMO 1: CHẠY TRÊN CHATBOT BASELINE ---")
-    run_baseline_chatbot(sample_query, provider)
-    
-    print("\n--- DEMO 2: CHẠY TRÊN REACT AGENT ---")
-    run_react_agent(sample_query, provider)
+    sys.exit(main())
